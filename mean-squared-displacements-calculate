@@ -1,0 +1,81 @@
+#R script to: import TrackMate output, calculate and plot MSDs individually, average MSDs over all trajectories and find alpha
+
+#set working directory to where Trackmate output is
+setwd("~/Documents/R/ImageJ TrackMate analysis")
+
+Trackmate_output <- read.csv("Spots in tracks statistics old ILC1 2 again.csv") #Change file name to match TrackMate output
+Trajectories <- Trackmate_output[, c("TRACK_ID", "POSITION_X", "POSITION_Y", "POSITION_T")]
+Track_IDs <- unique(Trajectories$TRACK_ID)
+Number_of_tracks <- length(Track_IDs)
+print(Number_of_tracks)
+MSDs_all_tracks <- data.frame(matrix(ncol = 5, nrow = 0))
+colnames(MSDs_all_tracks) <- c("Track_ID", "t", "hypotenuse_MSD", "X_MSD", "Y_MSD")
+
+#Goes through each trajectory and lagtime to calculate all the displacements and MSDs
+library(plyr)
+for (Track_ID in Track_IDs){
+  print(Track_ID)
+  Track <- Trajectories[which(Trajectories$TRACK_ID == Track_ID), ]
+  Track_length <- count(Track$TRACK_ID)
+  end_timepoint <- Track_length$freq
+  MSD_hypotenuse_list <- c()
+  MSD_x_list <- c()
+  MSD_y_list <- c()
+  t <- 1
+  for (t in 1:(end_timepoint-1)){
+    hypotenuse_list <- c()
+    x_displacement_list <- c()
+    y_displacement_list <- c()
+    j <- 0
+    for (j in 0:(end_timepoint-1-t)) {
+      timepoint_1 <- Track[1+j, ]
+      timepoint_1_plus_t <- Track[1+j+t, ]
+      difference <- timepoint_1_plus_t - timepoint_1
+      x_displacement_sq <- (difference$POSITION_X)^2
+      y_displacement_sq <- (difference$POSITION_Y)^2
+      hypotenuse <- sqrt(x_displacement_sq + y_displacement_sq)
+      hypotenuse_list <- c(hypotenuse_list, (hypotenuse^2))
+      x_displacement_list <- c(x_displacement_list, x_displacement_sq)
+      y_displacement_list <- c(y_displacement_list, y_displacement_sq)}
+    MSD_hypotenuse <- mean(hypotenuse_list)
+    MSD_x <- mean(x_displacement_list)
+    MSD_y <- mean(y_displacement_list)
+    MSD_hypotenuse_list <- c(MSD_hypotenuse_list, MSD_hypotenuse)
+    MSD_x_list <- c(MSD_x_list, MSD_x)
+    MSD_y_list <- c(MSD_y_list, MSD_y)
+  }
+  MSDs_all_tracks <- rbind(MSDs_all_tracks, cbind(rep(Track_ID, length(MSD_x_list)), c(1:length(MSD_x_list)), MSD_hypotenuse_list, MSD_x_list, MSD_y_list))
+}
+colnames(MSDs_all_tracks) <- c("Track_ID", "Time_lag", "hypotenuse_MSD", "X_MSD", "Y_MSD")
+
+#Plot individual trajectories and save all MSDs
+library(ggplot2)
+ggplot(MSDs_all_tracks, aes(x = log(Time_lag), y = log(hypotenuse_MSD), group = Track_ID, color = Track_ID)) + geom_point() + geom_line() + theme(text = element_text(size=20)) + labs(x ="Log(Lag time)", y = "Log(MSD)")
+write.csv(MSDs_all_tracks, file = "MSDs_all_tracks_old_ILC1_2_again.csv") #change file name as appropritate 
+
+
+#Calculate mean MSDs across all trajectories at each lag time
+MSDs <- MSDs_all_tracks
+mean_MSDs <- as.data.frame(tapply(MSDs$hypotenuse_MSD, MSDs$Time_lag, mean))
+mean_MSDs$Lag_time <- rownames(mean_MSDs)
+colnames(mean_MSDs) <- c("Mean_MSD", "Lag_time")
+mean_MSDs <- transform(mean_MSDs, Lag_time = as.numeric(Lag_time))
+
+#Plot mean MSDs and use linear regression to calculate alpha
+truncated_MSDs <- mean_MSDs[1:29,] #Only want to do regression on lag time 0.1-1 second, as our acquisition time is 16.9ms, first 59 time lags
+require(stats)
+reg<-lm(log(Mean_MSD) ~ log(Lag_time), data = truncated_MSDs)
+reg
+coeff=coefficients(reg)
+eq = paste0("y = ", round(coeff[2],4), "*x + ", round(coeff[1],4))
+eq #equation of the line includes alpha as the gradient
+ggplot(truncated_MSDs, aes(x = log(Lag_time), y = log(Mean_MSD))) + 
+  geom_point() + 
+  geom_abline(intercept = as.numeric(paste(coeff[1])), slope = as.numeric(paste(coeff[2])), color="red", size=1.5)+ 
+  ggtitle(eq) +
+  theme(axis.text.y = element_text(hjust = 1, size = 16), text = element_text(size=20), legend.text=element_text(size=20))
+
+
+
+
+
